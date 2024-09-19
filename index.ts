@@ -1,16 +1,33 @@
-class Observer {
-  constructor(handlers) {
-    this.handlers = handlers;
-    this.isUnsubscribed = false;
-  }
+interface ObserverStatus {
+  status: HttpStatus;
+}
 
-  next(value) {
+interface ObserverError {
+  code: number;
+  text: string;
+}
+
+interface ObserverHandlers<T> {
+  next: (value: T) => ObserverStatus;
+  error: (value: ObserverError) => ObserverStatus;
+  complete: () => void;
+}
+
+type ObserverUnsubscriber = () => void;
+
+class Observer<T> {
+  private isUnsubscribed = false;
+  unsubscribeHolder: ObserverUnsubscriber | undefined;
+
+  constructor(private handlers: ObserverHandlers<T>) {}
+
+  next(value: T): void {
     if (this.handlers.next && !this.isUnsubscribed) {
       this.handlers.next(value);
     }
   }
 
-  error(error) {
+  error(error: ObserverError): void {
     if (!this.isUnsubscribed) {
       if (this.handlers.error) {
         this.handlers.error(error);
@@ -20,7 +37,7 @@ class Observer {
     }
   }
 
-  complete() {
+  complete(): void {
     if (!this.isUnsubscribed) {
       if (this.handlers.complete) {
         this.handlers.complete();
@@ -30,98 +47,123 @@ class Observer {
     }
   }
 
-  unsubscribe() {
+  unsubscribe(): void {
     this.isUnsubscribed = true;
 
-    if (this._unsubscribe) {
-      this._unsubscribe();
+    if (this.unsubscribeHolder) {
+      this.unsubscribeHolder();
     }
   }
 }
 
-class Observable {
-  constructor(subscribe) {
-    this._subscribe = subscribe;
+type ObservableSubscriber<T> = (observer: Observer<T>) => ObserverUnsubscriber;
+
+class Observable<T> {
+  private subscribeHolder: ObservableSubscriber<T>;
+
+  constructor(subscribe: ObservableSubscriber<T>) {
+    this.subscribeHolder = subscribe;
   }
 
-  static from(values) {
-    return new Observable((observer) => {
+  static from<T>(values: T[]): Observable<T> {
+    return new Observable<T>((observer) => {
       values.forEach((value) => observer.next(value));
 
       observer.complete();
 
       return () => {
-        console.log('unsubscribed');
+        console.log("unsubscribed");
       };
     });
   }
 
-  subscribe(obs) {
+  subscribe(obs: ObserverHandlers<T>): { unsubscribe(): void } {
     const observer = new Observer(obs);
 
-    observer._unsubscribe = this._subscribe(observer);
+    observer.unsubscribeHolder = this.subscribeHolder(observer);
 
-    return ({
-      unsubscribe() {
+    return {
+      unsubscribe(): void {
         observer.unsubscribe();
-      }
-    });
+      },
+    };
   }
 }
 
-const HTTP_POST_METHOD = 'POST';
-const HTTP_GET_METHOD = 'GET';
+const HTTP_METHOD = {
+  post: "POST",
+  get: "GET",
+} as const;
 
-const HTTP_STATUS_OK = 200;
-const HTTP_STATUS_INTERNAL_SERVER_ERROR = 500;
+type HttpMethod = (typeof HTTP_METHOD)[keyof typeof HTTP_METHOD];
 
+const HTTP_STATUS = {
+  ok: 200,
+  internalServerError: 500,
+} as const;
 
-const userMock = {
-  name: 'User Name',
-  age: 26,
-  roles: [
-    'user',
-    'admin'
-  ],
-  createdAt: new Date(),
-  isDeleated: false,
+type HttpStatus = (typeof HTTP_STATUS)[keyof typeof HTTP_STATUS];
+
+type User = {
+  name: string;
+  age: number;
+  roles: Array<"user" | "admin">;
+  createdAt: Date;
+  isDeleted: boolean;
 };
 
-const requestsMock = [
+type HTTPRequest<T> = {
+  method: HttpMethod;
+  host: string;
+  path: string;
+  body?: T;
+  params: Record<string, string>;
+};
+
+const userMock: User = {
+  name: "User Name",
+  age: 26,
+  roles: ["user", "admin"],
+  createdAt: new Date(),
+  isDeleted: false,
+};
+
+const requestsMock: HTTPRequest<User>[] = [
   {
-    method: HTTP_POST_METHOD,
-    host: 'service.example',
-    path: 'user',
+    method: HTTP_METHOD.post,
+    host: "service.example",
+    path: "user",
     body: userMock,
     params: {},
   },
   {
-    method: HTTP_GET_METHOD,
-    host: 'service.example',
-    path: 'user',
+    method: HTTP_METHOD.get,
+    host: "service.example",
+    path: "user",
     params: {
-      id: '3f5h67s4s'
+      id: "3f5h67s4s",
     },
-  }
+  },
 ];
 
-const handleRequest = (request) => {
+const handleRequest = (request: HTTPRequest<User>): ObserverStatus => {
   // handling of request
-  return {status: HTTP_STATUS_OK};
-};
-const handleError = (error) => {
-  // handling of error
-  return {status: HTTP_STATUS_INTERNAL_SERVER_ERROR};
+  return { status: HTTP_STATUS.ok };
 };
 
-const handleComplete = () => console.log('complete');
+const handleError = (error: ObserverError): ObserverStatus => {
+  // handling of error
+  return { status: HTTP_STATUS.internalServerError };
+};
+
+const handleComplete = (): void => console.log("complete");
 
 const requests$ = Observable.from(requestsMock);
 
 const subscription = requests$.subscribe({
   next: handleRequest,
   error: handleError,
-  complete: handleComplete
+  complete: handleComplete,
 });
 
 subscription.unsubscribe();
